@@ -116,7 +116,7 @@ int main(int argc, char* argv[]) {
 
   pid_t pid, sid;
 
-  openlog("RFM_Gatewayd", 0, LOG_USER);
+  openlog("Gatewayd", 0, LOG_USER);
 
   pid = fork();
   if (pid < 0) {
@@ -181,18 +181,18 @@ static int run_loop(struct mosquitto *mqtt) {
     res = mosquitto_loop(mqtt, 1000, 1);
 
     if (rfm69->receiveDone()) {
-      LOG("[%d] ",rfm69->SENDERID);
-      if (promiscuousMode) {
-	LOG(" to [%d] ", rfm69->TARGETID);
-      }
+      /* LOG("[%d] ",rfm69->SENDERID); */
+      /* if (promiscuousMode) { */
+      /* 	LOG(" to [%d] ", rfm69->TARGETID); */
+      /* } */
 
-      for(int i = 0; i < rfm69->DATALEN; i++) {
-	LOG("%x.", rfm69->DATA[i]);
-      }
-      LOG("\n");
+      /* for(int i = 0; i < rfm69->DATALEN; i++) { */
+      /* 	LOG("%x.", rfm69->DATA[i]); */
+      /* } */
+      /* LOG("\n"); */
 
       if (rfm69->DATALEN != sizeof(Payload)) {
-	LOG("Invalid payload received, not matching Payload struct! %d - %d\r\n", rfm69->DATALEN, sizeof(Payload));
+	syslog(LOG_ERR, "Invalid payload received, not matching Payload struct! %d - %d\r\n", rfm69->DATALEN, sizeof(Payload));
       } else {
 	theData = *(Payload*)rfm69->DATA; //assume radio.DATA actually contains our struct and not something else
 
@@ -203,14 +203,14 @@ static int run_loop(struct mosquitto *mqtt) {
 	sensorNode.batt_con_flt = theData.batt_con_flt;
 	sensorNode.var4_int = rfm69->RSSI;
 
-	LOG("Received Node ID = %d Device ID = %d Time = %d  RSSI = %d var2 = %f var3 = %f\n",
-	    sensorNode.nodeID,
-	    sensorNode.sensorID,
-	    sensorNode.uptime_usl,
-	    sensorNode.var4_int,
-	    sensorNode.sens_dat_flt,
-	    sensorNode.batt_con_flt
-	    );
+	/* LOG("Received Node ID = %d Device ID = %d Time = %d  RSSI = %d var2 = %f var3 = %f\n", */
+	/*     sensorNode.nodeID, */
+	/*     sensorNode.sensorID, */
+	/*     sensorNode.uptime_usl, */
+	/*     sensorNode.var4_int, */
+	/*     sensorNode.sens_dat_flt, */
+	/*     sensorNode.batt_con_flt */
+	/*     ); */
 	sendMQTT = 1;
       }
 
@@ -294,7 +294,7 @@ static void MQTTSendFloat(struct mosquitto* _client, int node, int sensor, int v
 // Handing of Mosquitto messages
 void callback(char* topic, byte* payload, unsigned int length) {
   // handle message arrived
-  LOG("Mosquitto Callback\n");
+  /* LOG("Mosquitto Callback\n"); */
 }
 
 /* Fail with an error message. */
@@ -314,6 +314,7 @@ static void on_connect(struct mosquitto *m, void *udata, int res) {
   if (res == 0) {             /* success */
     LOG("Connect succeed\n");
   } else {
+    syslog(LOG_ERR, "Connection Refused");
     die("connection refused\n");
   }
 }
@@ -322,15 +323,14 @@ static void on_connect(struct mosquitto *m, void *udata, int res) {
 static void on_message(struct mosquitto *m, void *udata,
 		       const struct mosquitto_message *msg) {
   if (msg == NULL) { return; }
-  LOG("-- got message @ %s: (%d, QoS %d, %s) '%s'\n",
-      msg->topic, msg->payloadlen, msg->qos, msg->retain ? "R" : "!r",
-      msg->payload);
-
+  /* LOG("-- got message @ %s: (%d, QoS %d, %s) '%s'\n", */
+  /*     msg->topic, msg->payloadlen, msg->qos, msg->retain ? "R" : "!r", */
+  /*     msg->payload); */
 }
 
 /* A message was successfully published. */
 static void on_publish(struct mosquitto *m, void *udata, int m_id) {
-  LOG("-- published successfully\n");
+  /* LOG("-- published successfully\n"); */
 }
 
 /* Successful subscription hook. */
