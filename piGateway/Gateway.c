@@ -135,6 +135,8 @@ int main(int argc, char* argv[]) {
 static int run_loop(struct mosquitto *mqtt) {
   int res;
   while(1) {
+    //Initialize nodeID to invalid
+    sensorNode.nodeID = -1;
     res = mosquitto_loop(mqtt, 1000, 1);
 
     if (rfm69->receiveDone()) {
@@ -178,14 +180,16 @@ static int run_loop(struct mosquitto *mqtt) {
 	// When a node requests an ACK, respond to the ACK
 	// and also send a packet requesting an ACK (every 3rd one only)
 	// This way both TX/RX NODE functions are tested on 1 end at the GATEWAY
-	if (ackCount++%3==0) {
-	  //Serial.print(" Pinging node ");
+	if (((ackCount++ % 3) == 0) && (sensorNode.nodeID != -1)) {
+	  LOG(" Pinging node %u - ACK...", sensorNode.nodeID);
 	  //Serial.print(theNodeID);
 	  //Serial.print(" - ACK...");
 	  //delay(3); //need this when sending right after reception .. ?
-	  //if (radio.sendWithRetry(theNodeID, "ACK TEST", 8, 0))  // 0 = only 1 attempt, no retries
-	  //  Serial.print("ok!");
-	  //else Serial.print("nothing");
+	  if (rfm69->sendWithRetry(theNodeID, "ACK TEST", 8, 0)) { // 0 = only 1 attempt, no retries
+	    LOG("ok!");
+	  } else {
+	    LOG("No response to Gateway ack request");
+	  }
 	}
       }//end if radio.ACK_REQESTED
     } //end if radio.receive
