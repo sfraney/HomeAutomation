@@ -56,6 +56,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
+#include <vector>
 
 #define NODEID        1    //unique for each node on same network
 #define NETWORKID     10   //the same on all nodes that talk to each other
@@ -117,6 +118,13 @@ static void uso(void) {
   fprintf(stderr, "Use:\n Simply use it without args :D\n");
   exit(1);
 }
+
+struct tracker_entry {
+  short node;
+  time_t last;
+
+  tracker_entry(short n_) : node(n_) { }
+};
 
 int main(int argc, char* argv[]) {
   if (argc != 1) uso();
@@ -184,6 +192,7 @@ int main(int argc, char* argv[]) {
 /* Loop until it is explicitly halted or the network is lost, then clean up. */
 static int run_loop(struct mosquitto *mqtt) {
   int res;
+  std::vector<tracker_entry> tracker;
   while(1) {
     //Initialize nodeID to invalid (for determining if ack should be requested)
     sensorNode.nodeID = -1;
@@ -191,16 +200,16 @@ static int run_loop(struct mosquitto *mqtt) {
     res = mosquitto_loop(mqtt, 1000, 1);
 
     if (rfm69->receiveDone()) {
-      /* LOG("[%d] ",rfm69->SENDERID); */
-      /* if (promiscuousMode) { */
-      /* 	LOG(" to [%d] ", rfm69->TARGETID); */
-      /* } */
-
-      /* for(int i = 0; i < rfm69->DATALEN; i++) { */
-      /* 	LOG("%x.", rfm69->DATA[i]); */
-      /* } */
-      /* LOG("\n"); */
-
+      printf("[%d] ", rfm69->SENDERID);
+      if (promiscuousMode) {
+       	printf(" to [%d] ", rfm69->TARGETID);
+      }
+      
+      for(int i = 0; i < rfm69->DATALEN; i++) {
+       	printf("%x.", rfm69->DATA[i]);
+      }
+      printf("\n");
+      
       if (rfm69->DATALEN != sizeof(Payload)) {
 	LOG_E("Invalid payload received, not matching Payload struct! %d - %d\r\n", rfm69->DATALEN, sizeof(Payload));
       } else {
@@ -213,15 +222,39 @@ static int run_loop(struct mosquitto *mqtt) {
 	sensorNode.batt_con_flt = theData.batt_con_flt;
 	sensorNode.var4_int = rfm69->RSSI;
 
-	/* LOG("Received Node ID = %d Device ID = %d Time = %d  RSSI = %d var2 = %f var3 = %f\n", */
-	/*     sensorNode.nodeID, */
-	/*     sensorNode.sensorID, */
-	/*     sensorNode.uptime_usl, */
-	/*     sensorNode.var4_int, */
-	/*     sensorNode.sens_dat_flt, */
-	/*     sensorNode.batt_con_flt */
-	/*     ); */
+	printf("Received Node ID = %d Device ID = %d Time = %d  RSSI = %d var2 = %f var3 = %f\n",
+	    sensorNode.nodeID,
+	    sensorNode.sensorID,
+	    sensorNode.uptime_usl,
+	    sensorNode.var4_int,
+	    sensorNode.sens_dat_flt,
+	    sensorNode.batt_con_flt
+	    );
 	sendMQTT = 1;
+
+	//Update tracker
+	//find existing entry
+	std::vector<tracker_entry>::iterator t_it;
+	for(t_it = tracker.begin();
+	    t_it != tracker.end();
+	    ++t_it) {
+	  if(t_it->node == sensorNode.nodeID) {
+	    break;
+	  }
+	}
+	if(t_it == tracker.end()) {  //entry not found
+	  //TEST
+	  printf("Expanding tracker to %i entries\n", tracker.size() + 1);
+	  //TEST*\/
+	  //	  create_array(++num_nodes, tracker);
+	  tracker_entry n_tracker(sensorNode.nodeID);
+	  tracker.push_back(n_tracker);
+	  printf("New node %i added\n", sensorNode.nodeID);
+	  t_it = tracker.end();
+	  --t_it;
+	}
+	t_it->last = time(NULL);
+	printf("Updated node %i at time %f\n", t_it->node, t_it->last);
       }
 
       if (rfm69->ACK_REQUESTED) {
@@ -232,12 +265,12 @@ static int run_loop(struct mosquitto *mqtt) {
 	// and also send a packet requesting an ACK (every 3rd one only)
 	// This way both TX/RX NODE functions are tested on 1 end at the GATEWAY
 	if ((ackCount++%3==0) && (sensorNode.nodeID != -1)) {
-	  //Serial.print(" Pinging node ");
-	  //Serial.print(theNodeID);
-	  //Serial.print(" - ACK...");
+	  printf(" Pinging node %u - ACK...", sensorNode.nodeID);
 	  sleep(3); //need this when sending right after reception .. ?
 	  if (rfm69->sendWithRetry(theNodeID, "ACK TEST", 8, 0)) {// 0 = only 1 attempt, no retries
-	    printf("Gateway request ack success");
+	    printf("success\n");
+	  } else {
+	    printf("FAILURE\n");
 	  }
 	}
       }//end if radio.ACK_REQESTED
@@ -357,4 +390,3 @@ static bool set_callbacks(struct mosquitto *m) {
   mosquitto_message_callback_set(m, on_message);
   return true;
 }
-
