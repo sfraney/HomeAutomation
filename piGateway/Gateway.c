@@ -193,7 +193,9 @@ int main(int argc, char* argv[]) {
 static int run_loop(struct mosquitto *mqtt) {
   int res;
   std::vector<tracker_entry> tracker;
+  time_t last_check = time(NULL);
   while(1) {
+    time_t curr_time = time(NULL);
     //Initialize nodeID to invalid (for determining if ack should be requested)
     sensorNode.nodeID = -1;
 
@@ -243,18 +245,15 @@ static int run_loop(struct mosquitto *mqtt) {
 	  }
 	}
 	if(t_it == tracker.end()) {  //entry not found
-	  //TEST
 	  printf("Expanding tracker to %i entries\n", tracker.size() + 1);
-	  //TEST*\/
-	  //	  create_array(++num_nodes, tracker);
 	  tracker_entry n_tracker(sensorNode.nodeID);
 	  tracker.push_back(n_tracker);
-	  printf("New node %i added\n", sensorNode.nodeID);
+	  LOG("New node %i added\n", sensorNode.nodeID);
 	  t_it = tracker.end();
 	  --t_it;
 	}
-	t_it->last = time(NULL);
-	printf("Updated node %i at time %f\n", t_it->node, t_it->last);
+	printf("Updating node %i after %.f seconds\n", t_it->node, difftime(curr_time, t_it->last));
+	t_it->last = curr_time;
       }
 
       if (rfm69->ACK_REQUESTED) {
@@ -266,7 +265,7 @@ static int run_loop(struct mosquitto *mqtt) {
 	// This way both TX/RX NODE functions are tested on 1 end at the GATEWAY
 	if ((ackCount++%3==0) && (sensorNode.nodeID != -1)) {
 	  printf(" Pinging node %u - ACK...", sensorNode.nodeID);
-	  sleep(3); //need this when sending right after reception .. ?
+	  //sleep(3); //need this when sending right after reception .. ?
 	  if (rfm69->sendWithRetry(theNodeID, "ACK TEST", 8, 0)) {// 0 = only 1 attempt, no retries
 	    printf("success\n");
 	  } else {
@@ -292,7 +291,19 @@ static int run_loop(struct mosquitto *mqtt) {
       sendMQTT = 0;
     }//end if sendMQTT
 
-    sleep(1);
+    //check if any nodes lost contact in the last minute
+    if(difftime(curr_time, last_check) >= 60) {
+      for(std::vector<tracker_entry>::iterator t_it = tracker.begin();
+	  t_it != tracker.end(); ) {
+	if(difftime(curr_time, t_it->last) > 60) {  //Lost contact
+	  LOG_E("Lost contact with node %i\n", t_it->node);
+	  t_it = tracker.erase(t_it);
+	} else {
+	  ++t_it;
+	}
+      }
+    }
+    //    sleep(1);
   }
 
   mosquitto_destroy(mqtt);
