@@ -22,26 +22,37 @@
 */
 
 //general --------------------------------
-#if 1
+#define DEBUG 1
+#if DEBUG
 #define DEBUG1(expression)  fprintf(stderr, expression)
 #define DEBUG2(expression, arg)  fprintf(stderr, expression, arg)
 #define DEBUGLN1(expression)  
-//{fprintf(stderr, expression); fprintf(stderr, "\r\n");}
+#ifdef DAEMON
+#define LOG(...) do { syslog(LOG_INFO, __VA_ARGS__); } while (0)
+#define LOG_E(...) do { syslog(LOG_ERR, __VA_ARGS__); } while (0)
+#else
 #define LOG(...) do { printf(__VA_ARGS__); } while (0)
+#define LOG_E(...) do { printf(__VA_ARGS__); } while (0)
+#endif //DAEMON
 #else
 #define DEBUG1(expression)
 #define DEBUG2(expression, arg)
 #define DEBUGLN1(expression)
 #define LOG(...)
+#define LOG_E(...)
 #endif
 
 //RFM69  ----------------------------------
 #include "rfm69.h"
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <unistd.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
+#include <syslog.h>
+#include <time.h>
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
@@ -109,7 +120,46 @@ static void uso(void) {
 
 int main(int argc, char* argv[]) {
   if (argc != 1) uso();
+#ifdef DAEMON
+  pid_t pid, sid;
 
+  openlog("Gatewayd", 0, LOG_USER);
+
+  pid = fork();
+  if (pid < 0) {
+    LOG_E("fork failed");
+    exit(EXIT_FAILURE);
+  }
+  /* If we got a good PID, then
+     we can exit the parent process. */
+  if (pid > 0) {
+    LOG("Child spawned, pid %d\n", pid);
+    exit(EXIT_SUCCESS);
+  }
+
+  /* Change the file mode mask */
+  umask(0);
+                
+  /* Open any logs here */        
+                
+  /* Create a new SID for the child process */
+  sid = setsid();
+  if (sid < 0) {
+    LOG_E("setsid failed");
+    exit(EXIT_FAILURE);
+  }
+        
+  /* Change the current working directory */
+  if ((chdir("/")) < 0) {
+    LOG_E("chdir failed");
+    exit(EXIT_FAILURE);
+  }
+        
+  /* Close out the standard file descriptors */
+  close(STDIN_FILENO);
+  close(STDOUT_FILENO);
+  close(STDERR_FILENO);
+#endif //DAEMON
   struct mosquitto *mqtt = mosquitto_new(MQTT_CLIENT_ID, true, null);
   if (mqtt == NULL) { die("mosquitto init() failure\n"); }
 
@@ -124,7 +174,7 @@ int main(int argc, char* argv[]) {
 #endif
   rfm69->encrypt(ENCRYPTKEY);
   rfm69->promiscuous(promiscuousMode);
-  LOG("\nListening at %d Mhz...", FREQUENCY==RF69_433MHZ ? 433 : FREQUENCY==RF69_868MHZ ? 868 : 915);
+  LOG("Listening at %d Mhz...", FREQUENCY==RF69_433MHZ ? 433 : FREQUENCY==RF69_868MHZ ? 868 : 915);
 
   LOG("setup complete\n");
 
@@ -135,23 +185,24 @@ int main(int argc, char* argv[]) {
 static int run_loop(struct mosquitto *mqtt) {
   int res;
   while(1) {
-    //Initialize nodeID to invalid
+    //Initialize nodeID to invalid (for determining if ack should be requested)
     sensorNode.nodeID = -1;
+
     res = mosquitto_loop(mqtt, 1000, 1);
 
     if (rfm69->receiveDone()) {
-      LOG("[%d] ",rfm69->SENDERID);
-      if (promiscuousMode) {
-	LOG(" to [%d] ", rfm69->TARGETID);
-      }
+      /* LOG("[%d] ",rfm69->SENDERID); */
+      /* if (promiscuousMode) { */
+      /* 	LOG(" to [%d] ", rfm69->TARGETID); */
+      /* } */
 
-      for(int i = 0; i < rfm69->DATALEN; i++) {
-	LOG("%x.", rfm69->DATA[i]);
-      }
-      LOG("\n");
+      /* for(int i = 0; i < rfm69->DATALEN; i++) { */
+      /* 	LOG("%x.", rfm69->DATA[i]); */
+      /* } */
+      /* LOG("\n"); */
 
       if (rfm69->DATALEN != sizeof(Payload)) {
-	LOG("Invalid payload received, not matching Payload struct! %d - %d\r\n", rfm69->DATALEN, sizeof(Payload));
+	LOG_E("Invalid payload received, not matching Payload struct! %d - %d\r\n", rfm69->DATALEN, sizeof(Payload));
       } else {
 	theData = *(Payload*)rfm69->DATA; //assume radio.DATA actually contains our struct and not something else
 
@@ -162,14 +213,14 @@ static int run_loop(struct mosquitto *mqtt) {
 	sensorNode.batt_con_flt = theData.batt_con_flt;
 	sensorNode.var4_int = rfm69->RSSI;
 
-	LOG("Received Node ID = %d Device ID = %d Time = %d  RSSI = %d var2 = %f var3 = %f\n",
-	    sensorNode.nodeID,
-	    sensorNode.sensorID,
-	    sensorNode.uptime_usl,
-	    sensorNode.var4_int,
-	    sensorNode.sens_dat_flt,
-	    sensorNode.batt_con_flt
-	    );
+	/* LOG("Received Node ID = %d Device ID = %d Time = %d  RSSI = %d var2 = %f var3 = %f\n", */
+	/*     sensorNode.nodeID, */
+	/*     sensorNode.sensorID, */
+	/*     sensorNode.uptime_usl, */
+	/*     sensorNode.var4_int, */
+	/*     sensorNode.sens_dat_flt, */
+	/*     sensorNode.batt_con_flt */
+	/*     ); */
 	sendMQTT = 1;
       }
 
@@ -180,15 +231,13 @@ static int run_loop(struct mosquitto *mqtt) {
 	// When a node requests an ACK, respond to the ACK
 	// and also send a packet requesting an ACK (every 3rd one only)
 	// This way both TX/RX NODE functions are tested on 1 end at the GATEWAY
-	if (((ackCount++ % 3) == 0) && (sensorNode.nodeID != -1)) {
-	  LOG(" Pinging node %u - ACK...", sensorNode.nodeID);
+	if ((ackCount++%3==0) && (sensorNode.nodeID != -1)) {
+	  //Serial.print(" Pinging node ");
 	  //Serial.print(theNodeID);
 	  //Serial.print(" - ACK...");
-	  //delay(3); //need this when sending right after reception .. ?
-	  if (rfm69->sendWithRetry(theNodeID, "ACK TEST", 8, 0)) { // 0 = only 1 attempt, no retries
-	    LOG("ok!");
-	  } else {
-	    LOG("No response to Gateway ack request");
+	  sleep(3); //need this when sending right after reception .. ?
+	  if (rfm69->sendWithRetry(theNodeID, "ACK TEST", 8, 0)) {// 0 = only 1 attempt, no retries
+	    printf("Gateway request ack success");
 	  }
 	}
       }//end if radio.ACK_REQESTED
@@ -209,6 +258,8 @@ static int run_loop(struct mosquitto *mqtt) {
 
       sendMQTT = 0;
     }//end if sendMQTT
+
+    sleep(1);
   }
 
   mosquitto_destroy(mqtt);
@@ -253,7 +304,7 @@ static void MQTTSendFloat(struct mosquitto* _client, int node, int sensor, int v
 // Handing of Mosquitto messages
 void callback(char* topic, byte* payload, unsigned int length) {
   // handle message arrived
-  LOG("Mosquitto Callback\n");
+  /* LOG("Mosquitto Callback\n"); */
 }
 
 /* Fail with an error message. */
@@ -273,6 +324,7 @@ static void on_connect(struct mosquitto *m, void *udata, int res) {
   if (res == 0) {             /* success */
     LOG("Connect succeed\n");
   } else {
+    LOG_E("Connection Refused");
     die("connection refused\n");
   }
 }
@@ -281,15 +333,14 @@ static void on_connect(struct mosquitto *m, void *udata, int res) {
 static void on_message(struct mosquitto *m, void *udata,
 		       const struct mosquitto_message *msg) {
   if (msg == NULL) { return; }
-  LOG("-- got message @ %s: (%d, QoS %d, %s) '%s'\n",
-      msg->topic, msg->payloadlen, msg->qos, msg->retain ? "R" : "!r",
-      msg->payload);
-
+  /* LOG("-- got message @ %s: (%d, QoS %d, %s) '%s'\n", */
+  /*     msg->topic, msg->payloadlen, msg->qos, msg->retain ? "R" : "!r", */
+  /*     msg->payload); */
 }
 
 /* A message was successfully published. */
 static void on_publish(struct mosquitto *m, void *udata, int m_id) {
-  LOG("-- published successfully\n");
+  /* LOG("-- published successfully\n"); */
 }
 
 /* Successful subscription hook. */
